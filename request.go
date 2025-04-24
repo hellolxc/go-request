@@ -212,7 +212,7 @@ func (r *Request) Do() (response *http.Response, err error) {
 	}
 
 	// 增加自定义处理错误回调
-	for retry := r.retry; retry > 0; retry-- {
+	for retry := 0; retry <= r.retry; retry++ {
 		// 重试等待时间
 		if err != nil && r.retryWaitTime > 0 {
 			time.Sleep(r.retryWaitTime)
