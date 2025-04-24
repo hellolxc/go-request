@@ -15,6 +15,9 @@ import (
 	"github.com/hellolxc/go-request/proxy"
 )
 
+// 如果请求没有设置 User-Agent，则使用默认的数据
+var defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.86 Safari/537.36"
+
 func NewClient() *Request {
 	r := &Request{
 		Client:  http.DefaultClient,
@@ -40,10 +43,8 @@ type Request struct {
 }
 
 func (r *Request) initHeaders() *Request {
-	r.headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
-	r.headers["Accept-Language"] = "en"
-
-	r.headers["Connection"] = "keep-alive"
+	// TODO 其他仿 Chrome 请求的 Header信息
+	r.headers["Accept-Language"] = "en-US,en;q=0.9"
 
 	r.headers["Pragma"] = "no-cache"
 	r.headers["Cache-Control"] = "no-cache"
@@ -99,6 +100,10 @@ func (r *Request) SetCookies(cookies []*http.Cookie) *Request {
 
 // 将 Header 写入到请求中
 func (r *Request) writeHeader() {
+	if !r.HasHeader("User-Agent") {
+		r.SetUserAgent(defaultUserAgent)
+	}
+
 	for k, v := range r.headers {
 		r.request.Header.Add(k, v)
 	}
