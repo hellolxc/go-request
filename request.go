@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/net/context"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,6 +15,12 @@ import (
 
 	"github.com/hellolxc/go-request/proxy"
 )
+
+type Response struct {
+	StatusCode int
+	Header     http.Header
+	Body       []byte
+}
 
 // 如果请求没有设置 User-Agent，则使用默认的数据
 var defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.86 Safari/537.36"
@@ -197,7 +204,7 @@ func (r *Request) handleRequestBody(body interface{}) (reader io.Reader) {
 	return
 }
 
-func (r *Request) Do() (response *http.Response, err error) {
+func (r *Request) Do() (response *Response, err error) {
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -214,31 +221,46 @@ func (r *Request) Do() (response *http.Response, err error) {
 	// 增加自定义处理错误回调
 	for retry := 0; retry <= r.retry; retry++ {
 		// 重试等待时间
-		if err != nil && r.retryWaitTime > 0 {
+		if retry > 0 && r.retryWaitTime > 0 {
 			time.Sleep(r.retryWaitTime)
 		}
 
-		if response, err = r.Client.Do(r.request); err == nil {
-			return
+		var resp *http.Response
+		if resp, err = r.Client.Do(r.request); err != nil {
+			if r.defaultIsRetryable(err) {
+				continue
+			}
+
+			return nil, err
 		}
 
-		// 打印调试信息
-		r.Debug(err.Error())
+		func() {
+			defer resp.Body.Close()
 
-		if errors.Is(err, io.EOF) {
-			continue
+			var body []byte
+			if body, err = io.ReadAll(resp.Body); err != nil {
+				return
+			}
+			_ = resp.Body.Close()
+
+			response = &Response{
+				StatusCode: resp.StatusCode,
+				Header:     resp.Header.Clone(),
+				Body:       body,
+			}
+
+			err = nil
+		}()
+
+		if err == nil && response != nil {
+			return response, nil
 		}
-
-		if errors.Is(err, syscall.ETIMEDOUT) {
-			continue
-		}
-
 	}
 
 	return
 }
 
-func (r *Request) DoWithStruct(data interface{}) (*http.Response, error) {
+func (r *Request) DoWithStruct(data interface{}) (*Response, error) {
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -249,19 +271,20 @@ func (r *Request) DoWithStruct(data interface{}) (*http.Response, error) {
 	}
 
 	if data != nil {
-		defer response.Body.Close()
-
-		body, err := io.ReadAll(response.Body)
-		if err != nil {
-			return response, err
-		}
-
-		if err := json.Unmarshal(body, &data); err != nil {
+		if err := json.Unmarshal(response.Body, &data); err != nil {
 			return response, err
 		}
 	}
 
 	return response, r.err
+}
+
+func (r *Request) defaultIsRetryable(err error) bool {
+	r.Debug(err.Error())
+
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 func (r *Request) Debug(message string) {
